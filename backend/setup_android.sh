@@ -135,7 +135,30 @@ log_info "Инсталирам Python зависимости във venv..."
 source "$VENV_DIR/bin/activate"
 
 pip install --upgrade pip
-pip install -r backend/requirements.txt
+
+# Пробваме нормална инсталация
+if pip install -r backend/requirements.txt 2>/dev/null; then
+    log_ok "Python зависимостите са инсталирани"
+else
+    log_warn "Нормалната инсталация не успя (вероятно pydantic-core не поддържа Python 3.14)"
+    log_info "Опитвам да инсталирам jiter и pydantic-core от GitHub master..."
+    
+    # Инсталираме всичко без pydantic-core
+    pip install fastapi==0.115.0 uvicorn[standard]==0.30.0 python-multipart==0.0.12 \
+        pydantic-settings==2.8.1 python-dotenv==1.1.0 httpx==0.28.1 \
+        loguru==0.7.3 pyyaml==6.0.2 typing-extensions annotated-types
+    
+    # Пробваме pydantic-core от GitHub master (може да има fix за Python 3.14)
+    if pip install "pydantic-core @ git+https://github.com/pydantic/pydantic-core.git" 2>/dev/null; then
+        pip install pydantic==2.11.1
+        log_ok "pydantic-core инсталиран от GitHub master"
+    else
+        log_warn "pydantic-core от GitHub не работи — инсталирам pydantic v1 (pure Python)"
+        pip install "pydantic<2" "pydantic-settings<2"
+        log_ok "pydantic v1 инсталиран (pure Python, съвместим с Python 3.14)"
+    fi
+fi
+
 deactivate
 log_ok "Python зависимостите са инсталирани във venv"
 
