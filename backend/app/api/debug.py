@@ -10,7 +10,7 @@ from typing import Optional
 from loguru import logger
 
 from app.core.debug_logger import debug_logger
-from app.config.settings import get_settings, get_runtime_setting
+from app.config.settings import get_settings, get_runtime_setting, set_runtime_setting
 
 router = APIRouter(prefix="/api/debug", tags=["debug"])
 
