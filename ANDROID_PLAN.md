@@ -27,7 +27,7 @@
 │  │  ┌──────────────▼───────────────────────┐   │   │
 │  │  │    whisper.cpp (ARM64 компилиран)     │   │   │
 │  │  │    • whisper-server за Android        │   │   │
-│  │  │    • GGUF модел (ggml-large-v3-q5_0) │   │   │
+│  │  │    • GGUF модел (ggml-medium.en-q5_0) │   │   │
 │  │  └──────────────────────────────────────┘   │   │
 │  │                                             │   │
 │  │  ┌──────────────────────────────────────┐   │   │
@@ -115,7 +115,7 @@
 7. Компилира whisper.cpp за ARM64:
    - git clone https://github.com/ggerganov/whisper.cpp
    - make -j4 (ARM64 оптимизации)
-   - Сваля GGUF модел (ggml-large-v3-q5_0.bin)
+   - Сваля GGUF модел (ggml-medium.en-q5_0.bin)
 8. Създава .env файл с конфигурация
 9. Създава start.sh скрипт за лесно стартиране
 ```
@@ -224,7 +224,7 @@
 
 ### Компилирани компоненти
 - `whisper.cpp` (ARM64) — от изходен код
-- GGUF модел (ggml-large-v3-q5_0.bin) — ~3GB
+- GGUF модел (ggml-medium.en-q5_0.bin) — ~539MB
 
 ---
 

@@ -64,7 +64,7 @@ bash backend/setup_android.sh
 | **4. Python virtual environment** | Creates a venv at `backend/venv/` and installs all Python dependencies (FastAPI, uvicorn, httpx, loguru, etc.) |
 | **5. `.env` file** | Creates a default `.env` with Android-friendly settings. **You must edit OLLAMA_HOST** to point to your PC |
 | **6. whisper.cpp compilation** | Clones whisper.cpp from GitHub, compiles it for **ARM64** with architecture optimizations (`-march=armv8-a+crypto -O3`), disables x86-specific flags |
-| **7. Whisper model download** | Downloads `ggml-large-v3-q5_0.bin` (~3GB) from HuggingFace — the audio transcription model |
+| **7. Whisper model download** | Downloads `ggml-medium.en-q5_0.bin` (~539MB) from HuggingFace — the audio transcription model (on-demand, auto-download) |
 | **8. Frontend build** | If Node.js is available on the phone, it runs `npm install && npm run build` in the frontend directory |
 | **9. Start script** | Creates `start_pi_sb.sh` — a convenient launcher for all components |
 
@@ -255,7 +255,7 @@ All configuration is managed through the `.env` file in the project root. The ba
 | `CLOUD_MODELS` | `[]` | JSON array of cloud model names (e.g., `["gemma4:cloud"]`) |
 | `INGESTION_MODEL` | `gemma4:cloud` | Model used for processing and saving notes |
 | `RAG_MODEL` | `gemma4:cloud` | Model used for answering RAG questions |
-| `AUDIO_MODEL` | `ggml-large-v3-q5_0.bin` | Whisper.cpp GGUF model for audio transcription |
+| `AUDIO_MODEL` | `ggml-medium.en-q5_0.bin` | Whisper.cpp GGUF model for audio transcription (on-demand) |
 | `AUDIO_UPLOAD_DIR` | `./data/audio` | Directory for uploaded audio files |
 | `OKF_DATA_DIR` | `./data` | Directory for OKF knowledge storage |
 | `DEBUG_ENABLED` | `true` | Enable debug request/response logging |

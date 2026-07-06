@@ -26,7 +26,7 @@ const Settings: React.FC<SettingsProps> = ({ onClose, onSettingsChange }) => {
   const [allModelOptions, setAllModelOptions] = useState<{ name: string; source: 'local' | 'cloud' }[]>([]);
 
   // Audio model state (whisper.cpp GGUF модел)
-  const [audioModel, setAudioModel] = useState('ggml-large-v3-q5_0.bin');
+  const [audioModel, setAudioModel] = useState('');
 
   // Data management state
   const [exporting, setExporting] = useState(false);
@@ -477,7 +477,7 @@ const Settings: React.FC<SettingsProps> = ({ onClose, onSettingsChange }) => {
                   type="text"
                   value={audioModel}
                   onChange={(e) => setAudioModel(e.target.value)}
-                  placeholder="ggml-large-v3-q5_0.bin"
+                  placeholder="ggml-medium.en-q5_0.bin"
                 />
               </div>
             </div>

@@ -87,11 +87,11 @@ if exist "%WHISPER_SRC%\whisper-server.exe" (
     echo [WARN] whisper-server.exe not found — audio transcription may not work
 )
 
-if exist "%WHISPER_SRC%\ggml-large-v3-q5_0.bin" (
-    copy /Y "%WHISPER_SRC%\ggml-large-v3-q5_0.bin" "%WHISPER_OUT%" >nul
-    echo [OK] ggml-large-v3-q5_0.bin copied
+if exist "%WHISPER_SRC%\ggml-medium.en-q5_0.bin" (
+    copy /Y "%WHISPER_SRC%\ggml-medium.en-q5_0.bin" "%WHISPER_OUT%" >nul
+    echo [OK] ggml-medium.en-q5_0.bin copied
 ) else (
-    echo [WARN] ggml-large-v3-q5_0.bin not found — audio transcription may not work
+    echo [WARN] ggml-medium.en-q5_0.bin not found — audio transcription may not work
 )
 
 if exist "%WHISPER_SRC%\ggml-large-v3-turbo-q5_0.bin" (
@@ -135,7 +135,7 @@ if exist "%PROJECT_DIR%\.env" (
         echo CLOUD_MODELS=["gemma4:cloud"]
         echo INGESTION_MODEL=gemma4:cloud
         echo RAG_MODEL=gemma4:cloud
-        echo AUDIO_MODEL=ggml-large-v3-q5_0.bin
+        echo AUDIO_MODEL=ggml-medium.en-q5_0.bin
         echo DEBUG_ENABLED=true
         echo OKF_DATA_DIR=./data
         echo APP_NAME=pi_sb

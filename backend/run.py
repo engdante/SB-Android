@@ -26,7 +26,7 @@ def ensure_env_file():
             "CLOUD_MODELS=[]\n"
             "INGESTION_MODEL=gemma4:cloud\n"
             "RAG_MODEL=gemma4:cloud\n"
-            "AUDIO_MODEL=ggml-large-v3-q5_0.bin\n"
+            "AUDIO_MODEL=ggml-medium.en-q5_0.bin\n"
             "DEBUG_ENABLED=true\n"
             "OKF_DATA_DIR=./data\n"
             "APP_NAME=pi_sb\n"

@@ -28,8 +28,8 @@ log_error() { echo -e "${RED}[ERROR]${NC} $1"; }
 # ─── Конфигурация ───
 PI_SB_DIR="$HOME/pi_sb"
 WHISPER_DIR="$HOME/whisper.cpp"
-WHISPER_MODEL="ggml-large-v3-q5_0.bin"
-WHISPER_MODEL_URL="https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-q5_0.bin"
+WHISPER_MODEL="ggml-medium.en-q5_0.bin"
+WHISPER_MODEL_URL="https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-medium.en-q5_0.bin"
 PYTHON_VERSION="3.11"
 
 echo ""
@@ -176,8 +176,8 @@ CLOUD_MODELS=[]
 INGESTION_MODEL=gemma4:cloud
 RAG_MODEL=qwen3.5:9b
 
-# Аудио модел за whisper.cpp
-AUDIO_MODEL=ggml-large-v3-q5_0.bin
+# Аудио модел за whisper.cpp (on-demand, auto-download)
+AUDIO_MODEL=ggml-medium.en-q5_0.bin
 
 # Debug
 DEBUG_ENABLED=true
@@ -198,7 +198,7 @@ else
 fi
 
 # ─── 8. Компилиране на whisper.cpp за ARM64 ───
-if [ ! -f "$WHISPER_DIR/build/bin/whisper-server" ]; then
+if [ ! -f "$WHISPER_DIR/build/bin/whisper-cli" ]; then
     log_info "Компилирам whisper.cpp за ARM64..."
     
     if [ ! -d "$WHISPER_DIR" ]; then
@@ -218,7 +218,7 @@ if [ ! -f "$WHISPER_DIR/build/bin/whisper-server" ]; then
         -DWHISPER_NO_FMA=ON \
         -DWHISPER_NO_F16C=ON
     
-    make -j$(nproc) whisper-server
+    make -j$(nproc) whisper-cli
     
     # Сваляне на GGUF модела
     if [ ! -f "$WHISPER_DIR/models/$WHISPER_MODEL" ]; then
@@ -264,8 +264,6 @@ cat > start_pi_sb.sh << 'STARTEOF'
 set -e
 
 PI_SB_DIR="$HOME/pi_sb"
-WHISPER_DIR="$HOME/whisper.cpp"
-WHISPER_MODEL="ggml-large-v3-q5_0.bin"
 
 echo "=============================================="
 echo "  pi_sb — Second Brain (Android)"
@@ -282,12 +280,6 @@ fi
 cleanup() {
     echo ""
     echo "[STOP] Спирам pi_sb..."
-    
-    # Спираме whisper.cpp
-    if [ -f "$PI_SB_DIR/whisper.pid" ]; then
-        kill $(cat "$PI_SB_DIR/whisper.pid") 2>/dev/null || true
-        rm -f "$PI_SB_DIR/whisper.pid"
-    fi
     
     # Спираме backend
     if [ -f "$PI_SB_DIR/backend.pid" ]; then
@@ -308,36 +300,10 @@ trap cleanup SIGINT SIGTERM
 
 cd "$PI_SB_DIR"
 
-# 1. Стартираме whisper.cpp
-WHISPER_SERVER="$WHISPER_DIR/build/bin/whisper-server"
-WHISPER_MODEL_PATH="$WHISPER_DIR/models/$WHISPER_MODEL"
+# whisper се зарежда on-demand при транскрибиране (не работи като сървър)
+echo "[AUDIO] whisper.cpp — on-demand режим (моделът се зарежда само при транскрибиране)"
 
-if [ -f "$WHISPER_SERVER" ] && [ -f "$WHISPER_MODEL_PATH" ]; then
-    echo "[WHISPER] Стартирам whisper.cpp на порт 8080..."
-    
-    # Termux-specific: няма CREATE_NO_WINDOW, просто пускаме процеса
-    $WHISPER_SERVER \
-        --model "$WHISPER_MODEL_PATH" \
-        --host 127.0.0.1 \
-        --port 8080 \
-        -t 4 \
-        -l bg \
-        -bo 2 \
-        -et 2.40 \
-        -lpt -1.00 \
-        -nth 0.60 \
-        -ml 100 \
-        > /dev/null 2>&1 &
-    
-    WHISPER_PID=$!
-    echo $WHISPER_PID > "$PI_SB_DIR/whisper.pid"
-    echo "[WHISPER] Стартиран (PID: $WHISPER_PID)"
-    
-    # Изчакваме да се стартира
-    sleep 2
-fi
-
-# 2. Стартираме Python backend
+# Стартираме Python backend
 echo "[BACKEND] Стартирам FastAPI на порт 8000..."
 cd backend
 
@@ -356,7 +322,7 @@ echo "[BACKEND] Стартиран (PID: $BACKEND_PID)"
 
 cd "$PI_SB_DIR"
 
-# 3. Изчакваме backend-а да стартира
+# Изчакваме backend-а да стартира
 sleep 2
 
 echo ""

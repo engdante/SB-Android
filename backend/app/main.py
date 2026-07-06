@@ -40,16 +40,9 @@ async def lifespan(app: FastAPI):
     debug_logger.clear_all_logs()
     logger.info("🔍 Debug logs cleared (fresh start)")
 
-    # Start whisper.cpp server
-    transcriber = AudioTranscriber()
-    try:
-        await transcriber.start_server()
-        app.state.transcriber = transcriber
-        logger.info("🎤 whisper.cpp server started")
-    except Exception as e:
-        app.state.transcriber = transcriber
-        logger.error(f"❌ Failed to start whisper.cpp server: {e}")
-        logger.warning("🎤 Audio transcription will not be available")
+    # Initialize audio transcriber (on-demand, no persistent server)
+    app.state.transcriber = AudioTranscriber()
+    logger.info("🎤 Audio transcriber initialized (on-demand mode)")
 
     # Initialize wiki indexes on startup
     storage = OkfStorage()
@@ -60,12 +53,8 @@ async def lifespan(app: FastAPI):
 
     yield
 
-    # Stop whisper.cpp server
-    try:
-        await app.state.transcriber.stop_server()
-        logger.info("🎤 whisper.cpp server stopped")
-    except Exception as e:
-        logger.error(f"Error stopping whisper.cpp server: {e}")
+    # No persistent whisper server to stop — model is loaded on-demand
+    logger.info("🎤 Audio transcriber shut down")
 
     logger.info("👋 Server stopped.")
 

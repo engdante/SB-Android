@@ -1,7 +1,8 @@
 """
-Audio transcription module (whisper.cpp engine only).
-Transcribes audio files to text via a local whisper.cpp HTTP server.
-The server is started/stopped automatically by the backend (lifespan management).
+Audio transcription module (whisper.cpp CLI engine).
+Transcribes audio files to text using whisper-cli as a subprocess.
+The model is loaded on-demand and released after transcription completes.
+Supports auto-download of models from HuggingFace.
 Supports Bulgarian and English.
 """
 
@@ -9,231 +10,148 @@ from pathlib import Path
 from typing import Optional
 from loguru import logger
 
-from app.config.settings import get_settings, get_app_base_dir
 
-
-class WhisperCppEngine:
+class WhisperCliEngine:
     """
-    Local whisper.cpp HTTP server engine.
-    Manages whisper-server as a subprocess and communicates via REST API.
-    The server starts on FastAPI startup and stops on shutdown.
+    Local whisper.cpp CLI engine.
+    Runs whisper-cli as a subprocess for each transcription.
+    The model is loaded into RAM only during transcription, then released.
     
     Supports:
-    - Windows: whisper-server.exe
-    - Android/Linux: whisper-server (compiled binary)
+    - Windows: whisper-cli.exe
+    - Android/Linux: whisper-cli (compiled binary)
+    - Auto-download of models from HuggingFace ggerganov/whisper.cpp
     """
 
     def __init__(self):
         import sys
+        from app.config.settings import get_settings, get_app_base_dir
+
         s = get_settings()
-        self.host = "127.0.0.1"
-        self.port = 8080
-        self.server_url = f"http://{self.host}:{self.port}"
         self.model_name = s.audio_model
-        self._process = None
         self._is_android = sys.platform == "linux" and hasattr(sys, 'getandroidapilevel') or \
                           "com.termux" in str(getattr(sys, 'executable', ''))
 
         # Path to whisper.cpp directory — beside the EXE or in project root
         self.whisper_dir = get_app_base_dir() / "whisper.cpp"
         
-        # Determine the server executable based on platform
+        # Determine the CLI executable based on platform
         if self._is_android or sys.platform != "win32":
-            self.server_exe = self.whisper_dir / "build" / "bin" / "whisper-server"
-            # Fallback: try in whisper.cpp root
-            if not self.server_exe.exists():
-                self.server_exe = self.whisper_dir / "whisper-server"
+            # Try multiple possible locations for whisper-cli
+            self.cli_exe = self.whisper_dir / "build" / "bin" / "whisper-cli"
+            if not self.cli_exe.exists():
+                self.cli_exe = self.whisper_dir / "whisper-cli"
+            if not self.cli_exe.exists():
+                # Fallback: try the 'main' binary (older whisper.cpp builds)
+                self.cli_exe = self.whisper_dir / "build" / "bin" / "main"
+            if not self.cli_exe.exists():
+                self.cli_exe = self.whisper_dir / "main"
         else:
-            self.server_exe = self.whisper_dir / "whisper-server.exe"
-        
-        self.vad_model = self.whisper_dir / "ggml-silero-v6.2.0.bin"
+            self.cli_exe = self.whisper_dir / "whisper-cli.exe"
+            if not self.cli_exe.exists():
+                self.cli_exe = self.whisper_dir / "main.exe"
 
-        # Determine the model
+        # Determine the model path
         self.model_file = self.whisper_dir / "models" / self.model_name
         if not self.model_file.exists():
-            # Fallback to large-v3-q5_0 if model doesn't exist
-            fallback = self.whisper_dir / "models" / "ggml-large-v3-q5_0.bin"
-            if not fallback.exists():
-                # Try in whisper.cpp root (Windows layout)
-                fallback = self.whisper_dir / "ggml-large-v3-q5_0.bin"
+            # Fallback: try in whisper.cpp root (Windows layout)
+            fallback = self.whisper_dir / self.model_name
             if fallback.exists():
                 self.model_file = fallback
-                logger.warning(f"WhisperCppEngine: model {self.model_name} not found, using {fallback.name}")
+                logger.warning(f"WhisperCliEngine: model found in root dir: {fallback}")
             else:
-                raise FileNotFoundError(
-                    f"Whisper model not found: searched {self.model_file} and {fallback}"
-                )
+                # Model doesn't exist — will be auto-downloaded
+                logger.info(f"WhisperCliEngine: model {self.model_name} not found locally, will download on first use")
 
-    async def start_server(self):
-        """Starts whisper-server.exe as a subprocess."""
-        import asyncio
-        import subprocess
-        import threading
+    def _ensure_model(self) -> Path:
+        """
+        Ensures the whisper model exists locally.
+        If not found, auto-downloads from HuggingFace ggerganov/whisper.cpp.
+        
+        Returns:
+            Path to the model file
+        """
+        if self.model_file.exists():
+            return self.model_file
 
-        if self._process is not None:
-            logger.info("WhisperCppEngine: server already running")
-            return
-
-        # Check if exe exists
-        if not self.server_exe.exists():
-            raise FileNotFoundError(
-                f"whisper-server.exe not found at {self.server_exe}"
-            )
-
-        if not self.model_file.exists():
-            raise FileNotFoundError(
-                f"Whisper model not found: {self.model_file}"
-            )
-
-        cmd = [
-            str(self.server_exe),
-            "--model", str(self.model_file),
-            "--host", self.host,
-            "--port", str(self.port),
-            "--vad",
-            "--vad-model", str(self.vad_model),
-            "--vad-threshold", "0.5",
-            "--vad-min-speech-duration-ms", "250",
-            "--vad-min-silence-duration-ms", "200",
-            "--vad-speech-pad-ms", "50",
-            "-t", "4",
-            "-l", "bg",
-            "-bo", "2",
-            "-et", "2.40",
-            "-lpt", "-1.00",
-            "-nth", "0.60",
-            "-sns",
-            "-nf",
-            "-ml", "100",
-            # WITHOUT -pp (print progress) — it blocks stdout buffer during programmatic startup
-        ]
-
-        logger.info(f"WhisperCppEngine: starting {self.server_exe.name} on {self.host}:{self.port}")
-        logger.info(f"WhisperCppEngine: model={self.model_file.name}")
-
-        # Use subprocess.Popen with DEVNULL for stdout and stderr.
-        # On Windows PIPE can cause deadlock if buffer fills up.
-        # If there's an error, we'll see it as timeout in _wait_for_server.
-        import sys
-        def _start():
-            kwargs = {
-                "cwd": str(self.whisper_dir),
-                "stdout": subprocess.DEVNULL,
-                "stderr": subprocess.DEVNULL,
-            }
-            # Windows-specific: скрива конзолния прозорец
-            if sys.platform == "win32":
-                import subprocess as sp
-                kwargs["creationflags"] = sp.CREATE_NO_WINDOW
-            return subprocess.Popen(cmd, **kwargs)
-
-        loop = asyncio.get_event_loop()
-        self._process = await loop.run_in_executor(None, _start)
-
-        # Wait for server to be ready
-        await self._wait_for_server(timeout=30)
-        logger.info("WhisperCppEngine: server is ready")
-
-    async def stop_server(self):
-        """Stops the whisper-server.exe process."""
-        import asyncio
-
-        if self._process is None:
-            return
-
-        logger.info("WhisperCppEngine: stopping server...")
-        self._process.terminate()
-        try:
-            # subprocess.Popen.wait() is synchronous — must use run_in_executor
-            loop = asyncio.get_event_loop()
-            await asyncio.wait_for(
-                loop.run_in_executor(None, self._process.wait),
-                timeout=5.0
-            )
-        except asyncio.TimeoutError:
-            logger.warning("WhisperCppEngine: process did not stop, killing...")
-            self._process.kill()
-            loop = asyncio.get_event_loop()
-            await loop.run_in_executor(None, self._process.wait)
-
-        self._process = None
-        logger.info("WhisperCppEngine: server stopped")
-
-    @property
-    def is_running(self) -> bool:
-        """Checks if the server is running."""
-        if self._process is None:
-            return False
-        return self._process.returncode is None
-
-    async def _wait_for_server(self, timeout: int = 30):
-        """Waits for the whisper.cpp server to start responding."""
-        import asyncio
+        # Model not found — auto-download
         import httpx
-
-        start = asyncio.get_event_loop().time()
-        while asyncio.get_event_loop().time() - start < timeout:
-            try:
-                async with httpx.AsyncClient(timeout=2.0) as client:
-                    response = await client.get(f"{self.server_url}/health")
-                    if response.status_code == 200:
-                        return
-            except (httpx.RequestError, httpx.ConnectError):
-                pass
-            await asyncio.sleep(0.5)
-
-        raise TimeoutError(
-            f"WhisperCppEngine: server did not respond within {timeout} seconds"
-        )
-
-    def _start_stderr_reader(self):
-        """Reads stderr from whisper-server.exe via threading (Popen stderr is synchronous)."""
         import asyncio
-        import threading
 
-        def _reader():
-            try:
-                while self._process is not None and self._process.returncode is None:
-                    line = self._process.stderr.readline()
-                    if not line:
-                        break
-                    text = line.decode("utf-8", errors="replace").strip()
-                    if text:
-                        logger.debug(f"[whisper.cpp stderr] {text}")
-            except Exception as e:
-                logger.warning(f"WhisperCppEngine: error reading stderr: {e}")
+        model_url = f"https://huggingface.co/ggerganov/whisper.cpp/resolve/main/{self.model_name}"
+        models_dir = self.whisper_dir / "models"
+        models_dir.mkdir(parents=True, exist_ok=True)
+        temp_path = models_dir / f"{self.model_name}.download"
+        final_path = models_dir / self.model_name
 
-            # After the process has ended, log remaining stderr
-            if self._process is not None and self._process.returncode is not None:
-                try:
-                    remaining = self._process.stderr.read()
-                    if remaining:
-                        text = remaining.decode("utf-8", errors="replace").strip()
-                        if text:
-                            logger.warning(f"[whisper.cpp exited code={self._process.returncode}] {text}")
-                except Exception:
-                    pass
+        logger.info(f"⬇️ Downloading whisper model: {self.model_name}")
+        logger.info(f"   From: {model_url}")
+        logger.info(f"   To: {final_path}")
 
-        thread = threading.Thread(target=_reader, daemon=True)
-        thread.start()
+        try:
+            # Use synchronous httpx for simplicity in __init__
+            with httpx.Client(timeout=300.0, follow_redirects=True) as client:
+                with client.stream("GET", model_url) as response:
+                    response.raise_for_status()
+                    total = int(response.headers.get("content-length", 0))
+                    downloaded = 0
+                    
+                    with open(temp_path, "wb") as f:
+                        for chunk in response.iter_bytes(chunk_size=8192):
+                            f.write(chunk)
+                            downloaded += len(chunk)
+                            if total > 0:
+                                percent = (downloaded / total) * 100
+                                if downloaded % (1024 * 1024) < 8192:  # Log every ~1MB
+                                    logger.debug(f"   Download progress: {percent:.1f}% ({downloaded / 1024 / 1024:.1f}MB / {total / 1024 / 1024:.1f}MB)")
+
+            # Move temp file to final location
+            temp_path.rename(final_path)
+            size_mb = final_path.stat().st_size / (1024 * 1024)
+            logger.info(f"✅ Whisper model downloaded: {self.model_name} ({size_mb:.1f}MB)")
+            
+            self.model_file = final_path
+            return final_path
+
+        except Exception as e:
+            # Clean up temp file if it exists
+            if temp_path.exists():
+                temp_path.unlink()
+            logger.error(f"❌ Failed to download whisper model: {e}")
+            raise FileNotFoundError(
+                f"Whisper model '{self.model_name}' not found locally and download failed. "
+                f"Please download manually from: {model_url}"
+            )
 
     async def transcribe(self, audio_path: Path, language: Optional[str] = None) -> dict:
-        """Sends an audio file to the local whisper.cpp HTTP server."""
-        import httpx
-        import time
+        """
+        Transcribes an audio file using whisper-cli as a subprocess.
+        The model is loaded into RAM, transcription runs, then memory is released.
+        
+        Args:
+            audio_path: Path to the audio file
+            language: Optional language code ("bg", "en", or None for auto)
+            
+        Returns:
+            dict with keys: text, language, segments, duration
+        """
         import subprocess
+        import time
         import os
         import tempfile
+        import json
 
-        if not self.is_running:
-            raise RuntimeError("WhisperCppEngine: server is not running. Call start_server() first.")
+        # Ensure model exists (auto-download if needed)
+        model_path = self._ensure_model()
 
-        logger.info(f"WhisperCppEngine: transcribing {audio_path} (lang={language or 'auto'})")
+        logger.info(f"WhisperCliEngine: transcribing {audio_path} (lang={language or 'auto'})")
+        logger.info(f"WhisperCliEngine: model={model_path.name}, cli={self.cli_exe.name}")
 
         start_time = time.time()
 
         # Convert WebM/Opus to WAV (PCM int16, 16kHz mono)
         # whisper.cpp requires WAV format, cannot decode WebM directly
+        from app.config.settings import get_app_base_dir
         ffmpeg_path = get_app_base_dir() / "ffmpeg.exe"
         if not ffmpeg_path.exists():
             ffmpeg_path = "ffmpeg"  # fallback to PATH
@@ -242,7 +160,7 @@ class WhisperCppEngine:
             tmp_wav_path = tmp_wav.name
 
         try:
-            logger.info(f"WhisperCppEngine: converting {audio_path} -> {tmp_wav_path}")
+            logger.info(f"WhisperCliEngine: converting {audio_path} -> {tmp_wav_path}")
             subprocess.run(
                 [
                     str(ffmpeg_path), "-y",
@@ -258,104 +176,100 @@ class WhisperCppEngine:
                 timeout=120
             )
 
-            # Read the converted WAV file
-            with open(tmp_wav_path, "rb") as f:
-                audio_bytes = f.read()
+            # Build whisper-cli command
+            cmd = [
+                str(self.cli_exe),
+                "-m", str(model_path),
+                "-f", tmp_wav_path,
+                "-l", language or "bg",
+                "-otxt",           # output as text to stdout
+                "--no-prints",     # suppress progress output
+            ]
 
-            logger.info(f"WhisperCppEngine: converted to {len(audio_bytes)} bytes WAV")
+            logger.info(f"WhisperCliEngine: running: {' '.join(str(c) for c in cmd)}")
+            
+            # Run whisper-cli as subprocess
+            # The model loads, transcribes, then exits — releasing all RAM
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                timeout=300,  # 5 min timeout for long audio
+                cwd=str(self.whisper_dir)
+            )
+
+            if result.returncode != 0:
+                stderr = result.stderr.decode("utf-8", errors="replace") if result.stderr else ""
+                logger.error(f"WhisperCliEngine: process exited with code {result.returncode}: {stderr}")
+                raise RuntimeError(f"whisper-cli failed (exit code {result.returncode}): {stderr[:500]}")
+
+            # Read transcription from stdout
+            stdout = result.stdout.decode("utf-8", errors="replace").strip()
+            
+            # If stdout is empty, try reading the output .txt file
+            if not stdout:
+                txt_output = tmp_wav_path.replace(".wav", ".txt")
+                if os.path.exists(txt_output):
+                    with open(txt_output, "r", encoding="utf-8") as f:
+                        stdout = f.read().strip()
+                    os.unlink(txt_output)
+
+            full_text = stdout
+            duration_ms = (time.time() - start_time) * 1000
+            logger.info(f"WhisperCliEngine: transcription completed in {duration_ms:.0f}ms ({len(full_text)} chars)")
+
+            # whisper-cli doesn't return segments in text mode,
+            # so we return a simple result
+            return {
+                "text": full_text,
+                "language": language or "bg",
+                "segments": [],
+                "duration": 0.0
+            }
+
+        except subprocess.TimeoutExpired:
+            logger.error(f"WhisperCliEngine: transcription timed out after 300s")
+            raise RuntimeError("whisper-cli timed out")
         except subprocess.CalledProcessError as e:
             stderr = e.stderr.decode("utf-8", errors="replace") if e.stderr else ""
-            logger.error(f"WhisperCppEngine: ffmpeg error: {stderr}")
-            raise RuntimeError(f"ffmpeg conversion failed: {stderr}")
+            logger.error(f"WhisperCliEngine: ffmpeg error: {stderr}")
+            raise RuntimeError(f"ffmpeg conversion failed: {stderr[:500]}")
         except Exception as e:
-            logger.error(f"WhisperCppEngine: conversion error: {e}")
+            logger.error(f"WhisperCliEngine: transcription error: {e}")
             raise
         finally:
             if os.path.exists(tmp_wav_path):
                 os.unlink(tmp_wav_path)
 
-        # Send WAV to the local whisper.cpp server
-        async with httpx.AsyncClient(timeout=300.0) as client:
-            files = {"file": ("audio.wav", audio_bytes, "audio/wav")}
-            data = {
-                "temperature": "0.0",
-                "temperature_inc": "0.2",
-                "max_len": "100",
-                "best_of": "2",
-                "no_speech_thold": "0.6",
-                "suppress_nst": "true",
-                "entropy_thold": "2.40",
-                "logprob_thold": "-1.00",
-            }
-            if language:
-                data["language"] = language
-
-            response = await client.post(f"{self.server_url}/inference", files=files, data=data)
-            response.raise_for_status()
-            result = response.json()
-
-        duration_ms = (time.time() - start_time) * 1000
-        logger.info(f"WhisperCppEngine: transcription completed in {duration_ms:.0f}ms")
-
-        # whisper.cpp server returns {text, segments, ...}
-        full_text = result.get("text", "")
-        segments_raw = result.get("segments", [])
-
-        # Normalize segments
-        segment_list = []
-        for seg in segments_raw:
-            segment_list.append({
-                "start": seg.get("start", 0),
-                "end": seg.get("end", 0),
-                "text": seg.get("text", "").strip(),
-                "avg_logprob": seg.get("avg_logprob", 0),
-                "no_speech_prob": seg.get("no_speech_prob", 0)
-            })
-
-        return {
-            "text": full_text,
-            "language": result.get("language", language or "unknown"),
-            "segments": segment_list,
-            "duration": result.get("duration", 0.0)
-        }
-
 
 class AudioTranscriber:
     """
-    Audio transcriber — uses whisper.cpp engine.
-    The server is started/stopped via start_server()/stop_server().
+    Audio transcriber — uses whisper.cpp CLI engine.
+    The model is loaded on-demand for each transcription and released afterwards.
+    No persistent server — saves ~3GB RAM on mobile devices.
     """
 
     def __init__(self):
-        self._engine: Optional[WhisperCppEngine] = None
+        self._engine: Optional[WhisperCliEngine] = None
 
-    def _get_engine(self) -> WhisperCppEngine:
-        """Returns (or creates) a WhisperCppEngine instance."""
+    def _get_engine(self) -> WhisperCliEngine:
+        """Returns (or creates) a WhisperCliEngine instance."""
         if self._engine is None:
-            self._engine = WhisperCppEngine()
+            self._engine = WhisperCliEngine()
         return self._engine
-
-    async def start_server(self):
-        """Starts the whisper.cpp server."""
-        engine = self._get_engine()
-        await engine.start_server()
-
-    async def stop_server(self):
-        """Stops the whisper.cpp server."""
-        if self._engine is not None:
-            await self._engine.stop_server()
 
     @property
     def is_running(self) -> bool:
-        """Checks if the server is running."""
-        if self._engine is None:
-            return False
-        return self._engine.is_running
+        """
+        Always returns True — the CLI engine doesn't need a running server.
+        The model is loaded on-demand.
+        """
+        return True
 
     async def transcribe(self, audio_path: Path, language: Optional[str] = None,
                          postprocess: bool = True) -> dict:
         """
-        Transcribes an audio file using the whisper.cpp engine.
+        Transcribes an audio file using the whisper.cpp CLI engine.
+        Model is loaded, transcription runs, then memory is released.
 
         Args:
             audio_path: Path to the audio file
@@ -369,12 +283,6 @@ class AudioTranscriber:
 
         engine = self._get_engine()
         logger.info(f"AudioTranscriber: transcribing {audio_path}")
-
-        if not engine.is_running:
-            raise RuntimeError(
-                "whisper.cpp server is not running. "
-                "Restart the backend or check if whisper.cpp is configured correctly."
-            )
 
         result = await engine.transcribe(audio_path, language)
 
@@ -406,6 +314,7 @@ class AudioTranscriber:
         Returns:
             dict with transcription
         """
+        from app.config.settings import get_settings
         temp_path = get_settings().audio_upload_path / f"_temp_{filename}"
         with open(temp_path, "wb") as f:
             f.write(audio_bytes)

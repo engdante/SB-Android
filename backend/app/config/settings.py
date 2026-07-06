@@ -72,7 +72,7 @@ class Settings(BaseSettings):
     debug: bool = True
 
     # Audio transcription (whisper.cpp)
-    audio_model: str = "ggml-large-v3-q5_0.bin"  # GGUF model for whisper.cpp
+    audio_model: str = "ggml-medium.en-q5_0.bin"  # GGUF model for whisper.cpp
     audio_upload_dir: str = "./data/audio"
 
     # Backend URL (for frontend to know where to find the backend)
