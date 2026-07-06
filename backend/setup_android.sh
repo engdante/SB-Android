@@ -72,16 +72,31 @@ PYTHON_MAJOR=$(echo "$PYTHON_VER" | cut -d. -f1)
 PYTHON_MINOR=$(echo "$PYTHON_VER" | cut -d. -f2)
 log_info "Python версия: $PYTHON_VER"
 
-# Python 3.14 има breaking промени в C-API (премахнати PyUnicode_* функции),
-# които pydantic-core/jiter все още не поддържат. Използваме Python 3.13.
+# Termux на ARM64 има Python 3.14, но pydantic-core/jiter не го поддържат.
+# Опитваме да инсталираме python3.12 или python3.11 като алтернатива.
+NEED_FALLBACK=false
 if [ "$PYTHON_MAJOR" -eq 3 ] && [ "$PYTHON_MINOR" -ge 14 ]; then
-    log_warn "Python 3.14 има breaking C-API промени — инсталирам Python 3.13..."
-    pkg install -y python3.13 2>/dev/null || log_error "Python 3.13 не можа да се инсталира"
-    PYTHON_BIN="python3.13"
+    log_warn "Python 3.14 има breaking C-API промени — търся алтернативна Python версия..."
+    PYTHON_BIN=""
+    for ver in python3.12 python3.11 python3.10; do
+        if pkg install -y "$ver" 2>/dev/null; then
+            # Проверяваме дали наистина е инсталиран
+            if command -v "$ver" &> /dev/null; then
+                PYTHON_BIN="$ver"
+                log_ok "Инсталирах $ver"
+                break
+            fi
+        fi
+    done
+    if [ -z "$PYTHON_BIN" ]; then
+        log_warn "Няма алтернативна Python версия — ще използвам Python 3.14 с workaround..."
+        NEED_FALLBACK=true
+        PYTHON_BIN="python"
+    fi
 elif [ "$PYTHON_MAJOR" -lt 3 ] || ([ "$PYTHON_MAJOR" -eq 3 ] && [ "$PYTHON_MINOR" -lt 10 ]); then
-    log_warn "Python 3.10+ е препоръчителен. Опитвам да инсталирам python3.13..."
-    pkg install -y python3.13 2>/dev/null || log_warn "Ще продължим с текущата версия"
-    PYTHON_BIN="python3.13"
+    log_warn "Python 3.10+ е препоръчителен. Опитвам да инсталирам python3.12..."
+    pkg install -y python3.12 2>/dev/null || log_warn "Ще продължим с текущата версия"
+    PYTHON_BIN="python"
 else
     PYTHON_BIN="python"
 fi
