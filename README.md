@@ -210,35 +210,84 @@ Content in full Markdown...
 | `reference` | Reference materials |
 | `quote` | Quotes and citations |
 
-## 📱 Android Setup
+## 📱 Android Setup (Termux)
 
-pi_sb runs natively on Android via **Termux**. All components (backend, whisper.cpp, ffmpeg) execute locally on the device.
+pi_sb runs natively on Android via **Termux**. All components (backend, whisper.cpp, ffmpeg) execute locally on the phone — no root required. Only the LLM (Ollama) runs on your home PC or uses cloud models.
 
-### Automated Installation
+### Prerequisites
+
+1. **Install Termux** from [F-Droid](https://f-droid.org/en/packages/com.termux/) (NOT Google Play — it's outdated)
+2. **Install git** in Termux:
+   ```bash
+   pkg install git -y
+   ```
+3. **Clone the project**:
+   ```bash
+   git clone https://github.com/yourusername/pi_sb.git
+   cd pi_sb
+   ```
+
+### Automated Installation (setup_android.sh)
+
+The main installation script `backend/setup_android.sh` handles everything automatically:
 
 ```bash
-# Install Termux from F-Droid
-# Run the setup script:
-./backend/setup_android.sh
+# Run from the project root
+bash backend/setup_android.sh
 ```
 
-The script will:
-1. Install required packages (python, clang, ffmpeg, git, etc.)
-2. Create the project directory (`~/pi_sb`)
-3. Set up Python virtual environment
-4. Install Python dependencies
-5. Clone and compile **whisper.cpp** for ARM64
-6. Download the GGUF audio model
-7. Create a `.env` file with Android-friendly defaults
-8. Create a `start.sh` script for easy launching
+#### What the script does:
 
-### Manual Start on Android
+| Step | Description |
+|------|-------------|
+| **1. System packages** | Installs python, clang, make, cmake, git, ffmpeg, wget, curl, ninja, rust |
+| **2. Python version check** | Detects Python version — if 3.14+ (common on Termux ARM64), falls back to python3.12/3.11 or uses unpinned pydantic workaround |
+| **3. Project directory** | Creates `~/pi_sb/` with data subdirectories (`data/`, `data/audio/`, `data/raw/`, `data/wiki/concepts/`) |
+| **4. Python virtual environment** | Creates a venv at `backend/venv/` and installs all Python dependencies (FastAPI, uvicorn, httpx, loguru, etc.) |
+| **5. `.env` file** | Creates a default `.env` with Android-friendly settings. **You must edit OLLAMA_HOST** to point to your PC |
+| **6. whisper.cpp compilation** | Clones whisper.cpp from GitHub, compiles it for **ARM64** with architecture optimizations (`-march=armv8-a+crypto -O3`), disables x86-specific flags |
+| **7. Whisper model download** | Downloads `ggml-large-v3-q5_0.bin` (~3GB) from HuggingFace — the audio transcription model |
+| **8. Frontend build** | If Node.js is available on the phone, it runs `npm install && npm run build` in the frontend directory |
+| **9. Start script** | Creates `start_pi_sb.sh` — a convenient launcher for all components |
+
+> **Note:** If Node.js is not available on your phone, build the frontend on a PC:
+> ```bash
+> cd frontend && npm install && npm run build
+> ```
+> Then copy the `frontend/dist/` folder to `~/pi_sb/frontend/dist/` on your phone.
+
+### Starting pi_sb on Android
+
+After the setup script completes, start the system:
 
 ```bash
 cd ~/pi_sb
-./start.sh
-# → http://localhost:8000 (open in browser)
+bash start_pi_sb.sh
 ```
+
+The start script:
+1. Acquires a **wake lock** (`termux-wake-lock`) to prevent the phone from sleeping
+2. Starts **whisper.cpp server** on port 8080 (background)
+3. Starts **FastAPI backend** on port 8000
+4. Shows the URL: **http://localhost:8000**
+5. Press **Ctrl+C** to stop everything gracefully
+
+#### Start script features:
+- **PID tracking** — saves process IDs to `whisper.pid` and `backend.pid` for clean shutdown
+- **Signal handling** — catches `SIGINT`/`SIGTERM` to kill all processes and release wake lock
+- **Termux-specific** — no Windows `CREATE_NO_WINDOW` flag, proper Android executable paths
+
+### First Run Configuration
+
+1. **Edit `.env`** to set your Ollama host:
+   ```bash
+   nano ~/pi_sb/.env
+   ```
+   Set `OLLAMA_HOST` to your PC's local IP (e.g., `http://192.168.1.100:11434`)
+
+2. **Open the app** in your browser: `http://localhost:8000`
+
+3. **Install as PWA** — from the browser menu, select "Add to Home Screen" for an app-like experience
 
 ### Architecture (Android)
 
