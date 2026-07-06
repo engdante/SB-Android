@@ -66,14 +66,24 @@ pkg install -y \
     rust
 log_ok "Базовите пакети са инсталирани"
 
-# ─── 4. Проверка на Python версията ───
+# ─── 4. Проверка на Python версията и избор на правилната ───
 PYTHON_VER=$(python --version 2>&1 | grep -oP '\d+\.\d+')
 PYTHON_MAJOR=$(echo "$PYTHON_VER" | cut -d. -f1)
 PYTHON_MINOR=$(echo "$PYTHON_VER" | cut -d. -f2)
 log_info "Python версия: $PYTHON_VER"
-if [ "$PYTHON_MAJOR" -lt 3 ] || ([ "$PYTHON_MAJOR" -eq 3 ] && [ "$PYTHON_MINOR" -lt 10 ]); then
-    log_warn "Python 3.10+ е препоръчителен. Опитвам да инсталирам python3.11..."
-    pkg install -y python3.11 2>/dev/null || log_warn "Ще продължим с текущата версия"
+
+# Python 3.14 има breaking промени в C-API (премахнати PyUnicode_* функции),
+# които pydantic-core/jiter все още не поддържат. Използваме Python 3.13.
+if [ "$PYTHON_MAJOR" -eq 3 ] && [ "$PYTHON_MINOR" -ge 14 ]; then
+    log_warn "Python 3.14 има breaking C-API промени — инсталирам Python 3.13..."
+    pkg install -y python3.13 2>/dev/null || log_error "Python 3.13 не можа да се инсталира"
+    PYTHON_BIN="python3.13"
+elif [ "$PYTHON_MAJOR" -lt 3 ] || ([ "$PYTHON_MAJOR" -eq 3 ] && [ "$PYTHON_MINOR" -lt 10 ]); then
+    log_warn "Python 3.10+ е препоръчителен. Опитвам да инсталирам python3.13..."
+    pkg install -y python3.13 2>/dev/null || log_warn "Ще продължим с текущата версия"
+    PYTHON_BIN="python3.13"
+else
+    PYTHON_BIN="python"
 fi
 
 # ─── 5. Създаване на проектна директория ───
@@ -100,18 +110,14 @@ VENV_DIR="$PI_SB_DIR/backend/venv"
 if [ -d "$VENV_DIR" ]; then
     log_info "Виртуалната среда вече съществува, актуализирам..."
 else
-    log_info "Създавам виртуална Python среда в $VENV_DIR..."
-    python -m venv "$VENV_DIR"
+    log_info "Създавам виртуална Python среда в $VENV_DIR с $PYTHON_BIN..."
+    $PYTHON_BIN -m venv "$VENV_DIR"
     log_ok "Виртуалната среда е създадена"
 fi
 
 # Активираме venv и инсталираме зависимостите
 log_info "Инсталирам Python зависимости във venv..."
 source "$VENV_DIR/bin/activate"
-
-# Python 3.14+ нуждае от PYO3_USE_ABI3_FORWARD_COMPATIBILITY=1
-# за компилиране на pydantic-core (PyO3 все още не поддържа 3.14 официално)
-export PYO3_USE_ABI3_FORWARD_COMPATIBILITY=1
 
 pip install --upgrade pip
 pip install -r backend/requirements.txt
