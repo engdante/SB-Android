@@ -91,11 +91,23 @@ fi
 cd "$PI_SB_DIR"
 log_ok "Проектната директория е готова"
 
-# ─── 6. Инсталиране на Python зависимости ───
-log_info "Инсталирам Python зависимости..."
+# ─── 6. Създаване на виртуална Python среда (venv) ───
+VENV_DIR="$PI_SB_DIR/backend/venv"
+if [ -d "$VENV_DIR" ]; then
+    log_info "Виртуалната среда вече съществува, актуализирам..."
+else
+    log_info "Създавам виртуална Python среда в $VENV_DIR..."
+    python -m venv "$VENV_DIR"
+    log_ok "Виртуалната среда е създадена"
+fi
+
+# Активираме venv и инсталираме зависимостите
+log_info "Инсталирам Python зависимости във venv..."
+source "$VENV_DIR/bin/activate"
 pip install --upgrade pip
 pip install -r backend/requirements.txt
-log_ok "Python зависимостите са инсталирани"
+deactivate
+log_ok "Python зависимостите са инсталирани във venv"
 
 # ─── 7. Създаване на .env файл ───
 if [ ! -f ".env" ]; then
