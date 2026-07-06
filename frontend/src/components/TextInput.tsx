@@ -31,20 +31,12 @@ const TextInput: React.FC<TextInputProps> = ({ onSuccess }) => {
     }
   };
 
-  const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault();
-      handleSubmit();
-    }
-  };
-
   return (
     <div className="text-input">
       <h3>📝 Добави текст</h3>
       <textarea
         value={text}
         onChange={(e) => setText(e.target.value)}
-        onKeyDown={handleKeyDown}
         placeholder="Какво мислиш? Напиши своята идея, бележка, задача..."
         rows={4}
         disabled={loading}
@@ -53,7 +45,6 @@ const TextInput: React.FC<TextInputProps> = ({ onSuccess }) => {
         <button onClick={handleSubmit} disabled={loading || !text.trim()}>
           {loading ? '⏳ Обработва се...' : '🚀 Изпрати'}
         </button>
-        <span className="hint">Enter за изпращане, Shift+Enter за нов ред</span>
       </div>
       {error && <div className="error-message">{error}</div>}
     </div>

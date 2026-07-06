@@ -99,7 +99,6 @@ const AudioRecorder: React.FC<AudioRecorderProps> = ({ onSuccess }) => {
                 className={recording ? 'recording' : ''}>
           {recording ? '⏹ Спри запис' : '🎙 Започни запис'}
         </button>
-        <span>или</span>
         <input
           ref={fileInputRef}
           type="file"
@@ -110,15 +109,12 @@ const AudioRecorder: React.FC<AudioRecorderProps> = ({ onSuccess }) => {
         <button onClick={() => fileInputRef.current?.click()}>
           📁 Избери файл
         </button>
-        <span className="lang-label">Език:</span>
-        <select
-          className="lang-select"
-          value={language}
-          onChange={(e) => setLanguage(e.target.value)}
+        <button
+          className="lang-toggle"
+          onClick={() => setLanguage(language === 'bg' ? 'en' : 'bg')}
         >
-          <option value="bg">🇧🇬 Български</option>
-          <option value="en">🇬🇧 Английски</option>
-        </select>
+          {language === 'bg' ? '🇧🇬 BG' : '🇬🇧 US'}
+        </button>
       </div>
       {audioFile && audioUrl && (
         <div className="audio-preview">
