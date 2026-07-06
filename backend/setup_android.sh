@@ -108,6 +108,11 @@ fi
 # Активираме venv и инсталираме зависимостите
 log_info "Инсталирам Python зависимости във venv..."
 source "$VENV_DIR/bin/activate"
+
+# Python 3.14+ нуждае от PYO3_USE_ABI3_FORWARD_COMPATIBILITY=1
+# за компилиране на pydantic-core (PyO3 все още не поддържа 3.14 официално)
+export PYO3_USE_ABI3_FORWARD_COMPATIBILITY=1
+
 pip install --upgrade pip
 pip install -r backend/requirements.txt
 deactivate
