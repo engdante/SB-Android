@@ -79,7 +79,7 @@ class Settings(BaseSettings):
     backend_url: str = "http://localhost:8000"
 
     # Debug system
-    debug_enabled: bool = True
+    debug_enabled: bool = False
 
     @property
     def okf_data_path(self) -> Path:

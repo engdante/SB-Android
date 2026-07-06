@@ -14,12 +14,14 @@ const App: React.FC = () => {
   const [health, setHealth] = useState<HealthResponse | null>(null);
   const [lastResult, setLastResult] = useState<string | null>(null);
   const [showSettings, setShowSettings] = useState(false);
+  const [checking, setChecking] = useState(false);
 
   useEffect(() => {
     // Инициализираме debug системата
     initGlobalErrorHandler();
     checkDebugStatus();
 
+    // Еднократна проверка при стартиране
     const checkHealth = async () => {
       try {
         const result = await healthApi.check();
@@ -29,9 +31,20 @@ const App: React.FC = () => {
       }
     };
     checkHealth();
-    const interval = setInterval(checkHealth, 30000);
-    return () => clearInterval(interval);
+    // НИКАКЪВ polling — само ръчно или при събития
   }, []);
+
+  const handleManualCheck = async () => {
+    setChecking(true);
+    try {
+      const result = await healthApi.check();
+      setHealth(result);
+    } catch {
+      setHealth(null);
+    } finally {
+      setChecking(false);
+    }
+  };
 
   const handleSettingsChange = () => {
     // Refresh health after settings change
@@ -52,6 +65,14 @@ const App: React.FC = () => {
                 ? 'LLM недостъпен'
                 : 'Сървърът не отговаря'}
           </span>
+          <button
+            className="check-btn"
+            onClick={handleManualCheck}
+            disabled={checking}
+            title="Провери връзката"
+          >
+            {checking ? '⏳' : '🔍'}
+          </button>
           <button className="settings-btn" onClick={() => setShowSettings(true)} title="Настройки">
             ⚙️
           </button>

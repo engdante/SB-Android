@@ -76,10 +76,15 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Debug middleware — логва всяка заявка/отговор
+# Debug middleware — логва всяка заявка/отговор (само ако е включен)
 @app.middleware("http")
 async def debug_middleware(request, call_next):
     import time
+
+    # Ако debug системата е изключена — skip-ваме логването
+    if not debug_logger.enabled:
+        return await call_next(request)
+
     start = time.time()
 
     # Логваме заявката
@@ -158,4 +163,7 @@ if __name__ == "__main__":
     import sys
     # In frozen (EXE) mode, disable reload
     is_frozen = getattr(sys, 'frozen', False)
-    uvicorn.run("app.main:app", host="0.0.0.0", port=8000, reload=(not is_frozen and get_settings().debug))
+    # На Android/Termux reload винаги е False — не искаме да watch-ваме файлове на телефона
+    is_android = sys.platform == "linux" and ("com.termux" in str(sys.executable) or "termux" in str(Path.home()))
+    enable_reload = not is_frozen and not is_android and get_settings().debug
+    uvicorn.run("app.main:app", host="0.0.0.0", port=8000, reload=enable_reload)
