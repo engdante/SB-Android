@@ -35,3 +35,14 @@ whisper.cpp/models/ggml-*.bin
 
 # Frontend build output
 frontend/dist/
+*.tsbuildinfo
+
+# Large binaries (not needed for source)
+*.exe
+*.bin
+package-lock.json
+frontend/package-lock.json
+
+# Build artifacts
+*.spec
+build/
