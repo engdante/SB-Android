@@ -1,0 +1,17 @@
+{
+  "types": {
+    "journal": "Дневник",
+    "spirit": "Духовно израстване",
+    "idea": "Идеи и концепции",
+    "note": "Общи бележки",
+    "project": "Проекти",
+    "task": "Задачи",
+    "meeting": "Срещи",
+    "workout": "Тренировки",
+    "shopping": "Пазаруване",
+    "other": "Други"
+  },
+  "notifications": ["success", "error", "warning", "info"],
+  "api_statuses": ["ok", "error", "warning"],
+  "default_type": "note"
+}

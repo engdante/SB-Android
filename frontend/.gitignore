@@ -1,0 +1,59 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg-info/
+dist/
+build/
+*.egg
+.venv/
+venv/
+env/
+*.env
+
+# Node / Frontend
+node_modules/
+frontend/node_modules/
+frontend/dist/
+frontend/build/
+frontend/.next/
+frontend/out/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+*.log
+
+# Model files / Binaries (large, downloaded/side-loaded)
+*.bin
+*.exe
+
+# Data — цялата data/ директория (потребителски данни, аудио, wiki, runtime)
+# Системата създава data/index.md и data/log.md автоматично
+data/
+
+# Debug
+backend/debug/
+debug/
+
+# Environment
+.env
+backend/.env
+
+# TypeScript build info
+frontend/tsconfig.tsbuildinfo
+
+# Railway
+railway.json
+
+# Whisper.cpp - ignore everything except whisper-server.exe
+whisper.cpp/*
+!whisper.cpp/whisper-server.exe

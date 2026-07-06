@@ -1,0 +1,172 @@
+"""
+pi_sb — Second Brain API
+FastAPI application entry point.
+"""
+
+from contextlib import asynccontextmanager
+from pathlib import Path
+
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
+from loguru import logger
+
+from app.config.settings import get_settings, get_app_internal_dir
+from app.api import input as input_routes
+from app.api import search as search_routes
+from app.api import settings as settings_routes
+from app.api import debug as debug_routes
+from app.api import data as data_routes
+from app.api import llm_router as llm_routes
+from app.wiki.indexer import WikiIndexer
+from app.core.storage import OkfStorage
+from app.core.debug_logger import debug_logger
+from app.audio.transcriber import AudioTranscriber
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Lifespan събития: startup и shutdown."""
+    s = get_settings()
+    logger.info(f"🚀 {s.app_name} v{s.app_version} starting...")
+    logger.info(f"📂 OKF storage: {s.okf_data_path}")
+    logger.info(f"🤖 Ollama: {s.ollama_host} | Ingestion: {s.ingestion_model} | RAG: {s.rag_model}")
+
+    # Създаваме data директориите
+    s.okf_data_path.mkdir(parents=True, exist_ok=True)
+    s.audio_upload_path.mkdir(parents=True, exist_ok=True)
+
+    # Clear debug logs from previous sessions — always fresh info
+    debug_logger.clear_all_logs()
+    logger.info("🔍 Debug logs cleared (fresh start)")
+
+    # Start whisper.cpp server
+    transcriber = AudioTranscriber()
+    try:
+        await transcriber.start_server()
+        app.state.transcriber = transcriber
+        logger.info("🎤 whisper.cpp server started")
+    except Exception as e:
+        app.state.transcriber = transcriber
+        logger.error(f"❌ Failed to start whisper.cpp server: {e}")
+        logger.warning("🎤 Audio transcription will not be available")
+
+    # Initialize wiki indexes on startup
+    storage = OkfStorage()
+    indexer = WikiIndexer(storage=storage)
+    indexer.regenerate_all()
+    indexer.log_event(event_type="update", title="System startup", details="Wiki indexes regenerated.")
+    logger.info("📚 Wiki indexes initialized")
+
+    yield
+
+    # Stop whisper.cpp server
+    try:
+        await app.state.transcriber.stop_server()
+        logger.info("🎤 whisper.cpp server stopped")
+    except Exception as e:
+        logger.error(f"Error stopping whisper.cpp server: {e}")
+
+    logger.info("👋 Server stopped.")
+
+
+app = FastAPI(
+    title=get_settings().app_name,
+    version=get_settings().app_version,
+    description="Local Second Brain system for knowledge storage and retrieval",
+    lifespan=lifespan
+)
+
+# CORS — разрешаваме всички origin-и за мобилни устройства и PWA
+# В production може да се ограничи до конкретни домейни
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# Debug middleware — логва всяка заявка/отговор
+@app.middleware("http")
+async def debug_middleware(request, call_next):
+    import time
+    start = time.time()
+
+    # Логваме заявката
+    body = None
+    if request.method in ("POST", "PUT", "PATCH"):
+        try:
+            body = await request.json()
+        except Exception:
+            body = await request.body()
+
+    debug_logger.log_request(
+        method=request.method,
+        path=str(request.url.path),
+        params=dict(request.query_params),
+        body=body,
+    )
+
+    # Изпълняваме заявката
+    response = await call_next(request)
+    duration_ms = (time.time() - start) * 1000
+
+    # Логваме отговора
+    debug_logger.log_response(
+        method=request.method,
+        path=str(request.url.path),
+        status_code=response.status_code,
+        duration_ms=duration_ms,
+    )
+
+    return response
+
+
+# Регистриране на endpoints
+app.include_router(input_routes.router)
+app.include_router(search_routes.router)
+app.include_router(settings_routes.router)
+app.include_router(debug_routes.router)
+app.include_router(data_routes.router)
+app.include_router(llm_routes.router)
+
+
+@app.get("/api/health")
+async def health():
+    """Проверка на състоянието на системата."""
+    from app.llm.ollama_client import OllamaClient
+    from app.config.settings import get_settings
+    from app.core.storage import OkfStorage
+    ollama = OllamaClient(model=get_settings().ingestion_model)
+    llm_online = await ollama.health_check()
+
+    # Броим само реални OKF концепции (използваме storage който правилно филтрира)
+    s = get_settings()
+    storage = OkfStorage(data_dir=s.okf_data_path)
+    all_concepts = storage.get_all_concepts()
+    total = len(all_concepts)
+
+    return {
+        "status": "healthy" if llm_online else "degraded",
+        "llm_connected": llm_online,
+        "data_dir": str(s.okf_data_path),
+        "total_concepts": total
+    }
+
+
+# Serve React frontend in production — MUST BE LAST to avoid blocking API routes
+frontend_dist = get_app_internal_dir() / "frontend" / "dist"
+if frontend_dist.exists() and frontend_dist.is_dir():
+    app.mount("/", StaticFiles(directory=str(frontend_dist), html=True), name="frontend")
+    logger.info(f"📦 React frontend served from {frontend_dist}")
+else:
+    logger.info("📦 React frontend not built — API-only mode")
+
+
+if __name__ == "__main__":
+    import uvicorn
+    import sys
+    # In frozen (EXE) mode, disable reload
+    is_frozen = getattr(sys, 'frozen', False)
+    uvicorn.run("app.main:app", host="0.0.0.0", port=8000, reload=(not is_frozen and get_settings().debug))
