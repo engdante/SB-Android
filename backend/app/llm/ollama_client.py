@@ -1,5 +1,6 @@
 """
 HTTP клиент за комуникация с отдалечен или локален Ollama сървър.
+Използва shared HTTP client за connection pooling.
 """
 
 from pathlib import Path
@@ -10,6 +11,7 @@ from loguru import logger
 
 from app.config.settings import get_settings
 from app.core.debug_logger import debug_logger
+from app.llm.http_client import get_http_client
 
 
 class OllamaClient:
@@ -74,43 +76,43 @@ class OllamaClient:
             error = None
 
             try:
-                async with httpx.AsyncClient(timeout=120.0) as client:
-                    response = await client.post(f"{self.base_url}/generate", json=payload, headers=self._get_headers())
-                    response.raise_for_status()
-                    result = response.json()
-                    generated_text = result.get("response", "").strip()
+                client = get_http_client(timeout=120.0)
+                response = await client.post(f"{self.base_url}/generate", json=payload, headers=self._get_headers())
+                response.raise_for_status()
+                result = response.json()
+                generated_text = result.get("response", "").strip()
 
-                    duration_ms = (time.time() - start_time) * 1000
-                    logger.debug(f"Ollama отговор: {len(generated_text)} символа за {duration_ms:.0f}ms (опит {attempt})")
+                duration_ms = (time.time() - start_time) * 1000
+                logger.debug(f"Ollama отговор: {len(generated_text)} символа за {duration_ms:.0f}ms (опит {attempt})")
 
-                    # Ако отговорът е празен, retry-ваме
-                    if not generated_text:
-                        error = "empty_response"
-                        logger.warning(f"Ollama върна празен отговор (опит {attempt}/{max_retries})")
-                        debug_logger.log_llm(
-                            action="generate",
-                            model=self.model,
-                            prompt=prompt,
-                            system_prompt=system_prompt,
-                            duration_ms=duration_ms,
-                            error=error,
-                        )
-                        if attempt < max_retries:
-                            wait = 1.0 * attempt
-                            logger.info(f"Изчаквам {wait}s преди retry...")
-                            await asyncio.sleep(wait)
-                            continue
-                        return generated_text
-
+                # Ако отговорът е празен, retry-ваме
+                if not generated_text:
+                    error = "empty_response"
+                    logger.warning(f"Ollama върна празен отговор (опит {attempt}/{max_retries})")
                     debug_logger.log_llm(
                         action="generate",
                         model=self.model,
                         prompt=prompt,
                         system_prompt=system_prompt,
-                        response=generated_text,
                         duration_ms=duration_ms,
+                        error=error,
                     )
+                    if attempt < max_retries:
+                        wait = 1.0 * attempt
+                        logger.info(f"Изчаквам {wait}s преди retry...")
+                        await asyncio.sleep(wait)
+                        continue
                     return generated_text
+
+                debug_logger.log_llm(
+                    action="generate",
+                    model=self.model,
+                    prompt=prompt,
+                    system_prompt=system_prompt,
+                    response=generated_text,
+                    duration_ms=duration_ms,
+                )
+                return generated_text
 
             except httpx.TimeoutException:
                 duration_ms = (time.time() - start_time) * 1000
@@ -181,11 +183,11 @@ class OllamaClient:
         }
 
         try:
-            async with httpx.AsyncClient(timeout=30.0) as client:
-                response = await client.post(f"{self.base_url}/embeddings", json=payload, headers=self._get_headers())
-                response.raise_for_status()
-                result = response.json()
-                return result.get("embedding", [])
+            client = get_http_client(timeout=30.0)
+            response = await client.post(f"{self.base_url}/embeddings", json=payload, headers=self._get_headers())
+            response.raise_for_status()
+            result = response.json()
+            return result.get("embedding", [])
 
         except Exception as e:
             logger.error(f"Грешка при генериране на embedding: {e}")
@@ -199,24 +201,24 @@ class OllamaClient:
             list[dict]: Списък с информация за всеки модел
         """
         try:
-            async with httpx.AsyncClient(timeout=10.0) as client:
-                response = await client.get(f"{self.host}/api/tags", headers=self._get_headers())
-                response.raise_for_status()
-                result = response.json()
-                models = result.get("models", [])
-                # Връщаме само полезната информация
-                return [
-                    {
-                        "name": m.get("name", "unknown"),
-                        "size": m.get("size", 0),
-                        "family": m.get("details", {}).get("family", ""),
-                        "parameter_size": m.get("details", {}).get("parameter_size", ""),
-                        "quantization": m.get("details", {}).get("quantization_level", ""),
-                        "context_length": m.get("details", {}).get("context_length", 0),
-                        "capabilities": m.get("capabilities", []),
-                    }
-                    for m in models
-                ]
+            client = get_http_client(timeout=10.0)
+            response = await client.get(f"{self.host}/api/tags", headers=self._get_headers())
+            response.raise_for_status()
+            result = response.json()
+            models = result.get("models", [])
+            # Връщаме само полезната информация
+            return [
+                {
+                    "name": m.get("name", "unknown"),
+                    "size": m.get("size", 0),
+                    "family": m.get("details", {}).get("family", ""),
+                    "parameter_size": m.get("details", {}).get("parameter_size", ""),
+                    "quantization": m.get("details", {}).get("quantization_level", ""),
+                    "context_length": m.get("details", {}).get("context_length", 0),
+                    "capabilities": m.get("capabilities", []),
+                }
+                for m in models
+            ]
         except Exception as e:
             logger.error(f"Грешка при взимане на списък с модели от {self.host}: {e}")
             return []
@@ -224,8 +226,8 @@ class OllamaClient:
     async def health_check(self) -> bool:
         """Проверява дали Ollama сървърът е достъпен."""
         try:
-            async with httpx.AsyncClient(timeout=5.0) as client:
-                response = await client.get(f"{self.host}/api/tags", headers=self._get_headers())
-                return response.status_code == 200
+            client = get_http_client(timeout=5.0)
+            response = await client.get(f"{self.host}/api/tags", headers=self._get_headers())
+            return response.status_code == 200
         except Exception:
             return False

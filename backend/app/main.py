@@ -22,6 +22,7 @@ from app.wiki.indexer import WikiIndexer
 from app.core.storage import OkfStorage
 from app.core.debug_logger import debug_logger
 from app.audio.transcriber import AudioTranscriber
+from app.llm.http_client import close_http_client
 
 
 @asynccontextmanager
@@ -52,6 +53,10 @@ async def lifespan(app: FastAPI):
     logger.info("📚 Wiki indexes initialized")
 
     yield
+
+    # Shutdown: close shared HTTP client (connection pooling)
+    await close_http_client()
+    logger.info("🌐 HTTP client closed")
 
     # No persistent whisper server to stop — model is loaded on-demand
     logger.info("🎤 Audio transcriber shut down")

@@ -21,10 +21,41 @@ from pathlib import Path
 from datetime import datetime, timezone
 from typing import Optional
 import re
+import time
 
 from loguru import logger
 from app.config.settings import get_settings
 from app.config.okf_schema import OkfDocument, OkfMetadata, generate_filename
+
+
+# ──────────────────────────────────────────────
+# Module-level кеш (споделен между всички OkfStorage инстанции)
+# Това решава проблема с несинхронизирани кешове при множество инстанции.
+# ──────────────────────────────────────────────
+_concepts_cache: Optional[list[dict]] = None
+_concepts_cache_time: float = 0
+_CONCEPTS_CACHE_TTL: float = 300.0  # 5 минути (подходящо за 3-4 записа на ден)
+
+
+def invalidate_concepts_cache():
+    """Изчиства кеша с концепции. Извиква се при промяна на данните."""
+    global _concepts_cache, _concepts_cache_time
+    _concepts_cache = None
+    _concepts_cache_time = 0
+    logger.debug("Concepts cache invalidated")
+
+
+def get_cache_status() -> dict:
+    """Връща информация за състоянието на кеша."""
+    global _concepts_cache, _concepts_cache_time
+    if _concepts_cache is None:
+        return {"cached": False, "age_seconds": 0, "count": 0}
+    return {
+        "cached": True,
+        "age_seconds": round(time.time() - _concepts_cache_time, 1),
+        "count": len(_concepts_cache),
+        "ttl_seconds": _CONCEPTS_CACHE_TTL,
+    }
 
 
 class OkfStorage:
@@ -36,9 +67,9 @@ class OkfStorage:
         # Създаваме основните поддиректории
         (self.data_dir / "raw").mkdir(parents=True, exist_ok=True)
         (self.data_dir / "wiki" / "concepts").mkdir(parents=True, exist_ok=True)
-        # ⚠️ In-memory кешът е премахнат — водеше до проблеми с опресняването
-        # (няколко инстанции на OkfStorage имаха отделни кешове, които не се синхронизираха)
-        # Винаги четем от диска — достатъчно бързо за локална файлова система.
+        # ✅ Кешът е module-level (споделен между всички инстанции)
+        # Това решава проблема с несинхронизирани кешове.
+        # Виж: invalidate_concepts_cache(), get_cache_status()
 
     def _get_year_month_path(self, dt: datetime) -> Path:
         """Връща път: data_dir/<година>/<месец>/"""
@@ -120,6 +151,8 @@ class OkfStorage:
         with open(filepath, "w", encoding="utf-8") as f:
             f.write(document.to_markdown())
 
+        # Инвалидираме кеша при нов запис
+        invalidate_concepts_cache()
         logger.info(f"OKF файлът е записан: {filepath}")
         return filepath
 
@@ -132,14 +165,23 @@ class OkfStorage:
     def get_all_concepts(self) -> list[dict]:
         """Връща списък с всички концепции (метаданни + път).
 
-        Винаги чете от диска — няма in-memory кеш, за да се избегнат
-        проблеми с опресняването между различни инстанции на OkfStorage.
+        Използва module-level кеш с TTL (5 минути по подразбиране).
+        Кешът се инвалидира автоматично при save/delete/update операции.
 
         Пропуска:
         - index.md и log.md (коренови)
         - wiki/ директорията (индекси, LOG.md, концептуални страници)
         - raw/ директорията (source документи)
         """
+        global _concepts_cache, _concepts_cache_time
+
+        # Проверяваме дали кешът е валиден
+        cache_age = time.time() - _concepts_cache_time
+        if _concepts_cache is not None and cache_age < _CONCEPTS_CACHE_TTL:
+            logger.debug(f"get_all_concepts: using cache ({len(_concepts_cache)} concepts, age {cache_age:.1f}s)")
+            return _concepts_cache
+
+        # Кешът е невалиден или изтекъл — четем от диска
         concepts = []
         wiki_dir = self.data_dir / "wiki"
         raw_dir = self.data_dir / "raw"
@@ -165,6 +207,11 @@ class OkfStorage:
                 })
             except Exception as e:
                 logger.warning(f"Грешка при четене на {filepath}: {e}")
+
+        # Обновяваме кеша
+        _concepts_cache = concepts
+        _concepts_cache_time = time.time()
+        logger.debug(f"get_all_concepts: cache refreshed ({len(concepts)} concepts)")
 
         return concepts
 
@@ -198,6 +245,8 @@ class OkfStorage:
             return False
 
         filepath.unlink()
+        # Инвалидираме кеша при изтриване
+        invalidate_concepts_cache()
         logger.info(f"OKF файлът е изтрит: {filepath}")
         return True
 
@@ -217,6 +266,8 @@ class OkfStorage:
         with open(filepath, "w", encoding="utf-8") as f:
             f.write(document.to_markdown())
 
+        # Инвалидираме кеша при обновяване
+        invalidate_concepts_cache()
         logger.info(f"OKF файлът е обновен: {filepath}")
         return filepath
 

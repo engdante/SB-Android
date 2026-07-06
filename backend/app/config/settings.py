@@ -1,8 +1,11 @@
 import sys
+import os
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from pathlib import Path
 from typing import Optional
 import json
+
+from loguru import logger
 
 
 # ──────────────────────────────────────────────
@@ -164,11 +167,52 @@ def _save_runtime(runtime: dict) -> None:
         json.dump(runtime, f, indent=2, ensure_ascii=False)
 
 
+# ──────────────────────────────────────────────
+# Singleton Settings с mtime-based cache invalidation
+# ──────────────────────────────────────────────
+_settings_cache: Optional[Settings] = None
+_env_mtime: float = 0.0
+_runtime_mtime: float = 0.0
+
+
+def _get_file_mtime(path: Path) -> float:
+    """Връща mtime на файл или 0 ако не съществува."""
+    try:
+        return os.path.getmtime(path)
+    except OSError:
+        return 0.0
+
+
+def invalidate_settings_cache() -> None:
+    """Изчиства кеша с Settings. Извиква се при ръчна промяна на настройките."""
+    global _settings_cache, _env_mtime, _runtime_mtime
+    _settings_cache = None
+    _env_mtime = 0.0
+    _runtime_mtime = 0.0
+    logger.debug("Settings cache invalidated")
+
+
 def get_settings() -> Settings:
     """
-    Creates a new Settings instance, reading .env live.
-    Applies runtime overrides from runtime_settings.json.
+    Връща кеширан Settings обект.
+    Автоматично презарежда ако .env или runtime_settings.json са променени.
+    
+    Използва mtime check за ефективност - не чете файловете при всяко извикване,
+    а само проверява дали са модифицирани.
     """
+    global _settings_cache, _env_mtime, _runtime_mtime
+    
+    # Проверяваме mtime на файловете
+    current_env_mtime = _get_file_mtime(ENV_FILE)
+    current_runtime_mtime = _get_file_mtime(RUNTIME_FILE)
+    
+    # Ако кешът е валиден (файловете не са променени), връщаме го
+    if (_settings_cache is not None and 
+        current_env_mtime == _env_mtime and 
+        current_runtime_mtime == _runtime_mtime):
+        return _settings_cache
+    
+    # Файловете са променени или кешът е празен - презареждаме
     s = Settings()
     runtime = _load_runtime()
 
@@ -176,6 +220,12 @@ def get_settings() -> Settings:
         if json_key in runtime:
             setattr(s, attr_name, runtime[json_key])
 
+    # Обновяваме кеша
+    _settings_cache = s
+    _env_mtime = current_env_mtime
+    _runtime_mtime = current_runtime_mtime
+    logger.debug(f"Settings reloaded (env_mtime={current_env_mtime}, runtime_mtime={current_runtime_mtime})")
+    
     return s
 
 
@@ -189,7 +239,8 @@ def set_runtime_setting(key: str, value) -> None:
     else:
         runtime[key] = value
     _save_runtime(runtime)
-    from loguru import logger
+    # Инвалидираме кеша за да се презареди при следващото get_settings()
+    invalidate_settings_cache()
     logger.info(f"Runtime setting '{key}' = {value}")
 
 
@@ -199,8 +250,9 @@ def clear_runtime_setting(key: str) -> None:
     if key in runtime:
         del runtime[key]
         _save_runtime(runtime)
-        from loguru import logger
-        logger.info(f"Runtime setting '{key}' cleared")
+    # Инвалидираме кеша за да се презареди при следващото get_settings()
+    invalidate_settings_cache()
+    logger.info(f"Runtime setting '{key}' cleared")
 
 
 def get_runtime_setting(key: str, default=None):
@@ -267,5 +319,6 @@ def save_settings_to_env(settings: Settings) -> None:
     with open(env_path, "w", encoding="utf-8") as f:
         f.writelines(new_lines)
 
-    from loguru import logger
+    # Инвалидираме кеша за да се презареди при следващото get_settings()
+    invalidate_settings_cache()
     logger.info(f"Settings saved to .env: {env_path}")
