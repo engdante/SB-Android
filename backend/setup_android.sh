@@ -61,13 +61,17 @@ pkg install -y \
     curl \
     ninja \
     pkg-config \
-    which
+    which \
+    bc \
+    rust
 log_ok "Базовите пакети са инсталирани"
 
 # ─── 4. Проверка на Python версията ───
 PYTHON_VER=$(python --version 2>&1 | grep -oP '\d+\.\d+')
+PYTHON_MAJOR=$(echo "$PYTHON_VER" | cut -d. -f1)
+PYTHON_MINOR=$(echo "$PYTHON_VER" | cut -d. -f2)
 log_info "Python версия: $PYTHON_VER"
-if (( $(echo "$PYTHON_VER < 3.10" | bc -l) )); then
+if [ "$PYTHON_MAJOR" -lt 3 ] || ([ "$PYTHON_MAJOR" -eq 3 ] && [ "$PYTHON_MINOR" -lt 10 ]); then
     log_warn "Python 3.10+ е препоръчителен. Опитвам да инсталирам python3.11..."
     pkg install -y python3.11 2>/dev/null || log_warn "Ще продължим с текущата версия"
 fi
