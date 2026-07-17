@@ -2,15 +2,17 @@
 API endpoints за търсене и извличане на информация (Wiki + RAG).
 """
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Query, Response
 from pydantic import BaseModel
 from typing import Optional
+from pathlib import Path
 
 from app.core.storage import OkfStorage
 from app.core.processor import ConceptProcessor
 from app.llm.llm_manager import llm_manager
 from app.wiki.indexer import WikiIndexer
 from app.wiki.retriever import WikiRetriever
+from app.config.settings import get_settings
 from loguru import logger
 
 router = APIRouter(prefix="/api/search", tags=["search"])
@@ -18,6 +20,23 @@ storage = OkfStorage()
 processor = ConceptProcessor()
 indexer = WikiIndexer(storage=storage)
 wiki_retriever = WikiRetriever(storage=storage, indexer=indexer)
+
+
+def _safe_resolve_concept_path(filepath: str) -> Path:
+    """
+    Безопасно резолвира път до концепция, предотвратявайки path traversal.
+    Връща абсолютен път вътре в okf_data_path.
+    Ако пътят излиза извън data директорията, хвърля ValueError.
+    """
+    base_dir = get_settings().okf_data_path
+    # Резолвираме и нормализираме пътя
+    full_path = (base_dir / filepath).resolve()
+    # Проверяваме че резолвираният път е вътре в base_dir
+    try:
+        full_path.relative_to(base_dir)
+    except ValueError:
+        raise ValueError(f"Invalid path (outside data directory): {filepath}")
+    return full_path
 
 
 class QuestionInput(BaseModel):
@@ -56,13 +75,16 @@ async def list_concepts(
 
 
 @router.get("/concepts/{filepath:path}")
-async def get_concept(filepath: str):
+async def get_concept(filepath: str, response: Response):
     """Връща конкретна концепция по път."""
-    from pathlib import Path
-    from app.config.settings import get_settings
+    try:
+        full_path = _safe_resolve_concept_path(filepath)
+    except ValueError as e:
+        response.status_code = 403
+        return {"status": "error", "message": str(e)}
 
-    full_path = get_settings().okf_data_path / filepath
     if not full_path.exists() or not full_path.is_file():
+        response.status_code = 404
         return {
             "status": "error",
             "message": f"Concept not found: {filepath}"
@@ -77,6 +99,7 @@ async def get_concept(filepath: str):
             "body": doc.body
         }
     except Exception as e:
+        response.status_code = 500
         return {
             "status": "error",
             "message": str(e)
@@ -84,13 +107,16 @@ async def get_concept(filepath: str):
 
 
 @router.delete("/concepts/{filepath:path}")
-async def delete_concept(filepath: str):
+async def delete_concept(filepath: str, response: Response):
     """Изтрива конкретна концепция по път."""
-    from pathlib import Path
-    from app.config.settings import get_settings
+    try:
+        full_path = _safe_resolve_concept_path(filepath)
+    except ValueError as e:
+        response.status_code = 403
+        return {"status": "error", "message": str(e)}
 
-    full_path = get_settings().okf_data_path / filepath
     if not full_path.exists() or not full_path.is_file():
+        response.status_code = 404
         return {
             "status": "error",
             "message": f"Concept not found: {filepath}"
@@ -103,6 +129,7 @@ async def delete_concept(filepath: str):
 
         deleted = storage.delete_concept(full_path)
         if not deleted:
+            response.status_code = 500
             return {
                 "status": "error",
                 "message": f"Could not delete concept: {filepath}"
@@ -121,6 +148,7 @@ async def delete_concept(filepath: str):
             "message": f"Концепцията е изтрита: {title}"
         }
     except Exception as e:
+        response.status_code = 500
         return {
             "status": "error",
             "message": str(e)
@@ -133,15 +161,19 @@ class UpdateConceptInput(BaseModel):
 
 
 @router.put("/concepts/{filepath:path}")
-async def update_concept(filepath: str, data: UpdateConceptInput):
+async def update_concept(filepath: str, data: UpdateConceptInput, response: Response):
     """Обновява съществуваща концепция."""
-    from pathlib import Path
-    from app.config.settings import get_settings
     from app.config.okf_schema import OkfDocument, OkfMetadata
     from datetime import datetime
 
-    full_path = get_settings().okf_data_path / filepath
+    try:
+        full_path = _safe_resolve_concept_path(filepath)
+    except ValueError as e:
+        response.status_code = 403
+        return {"status": "error", "message": str(e)}
+
     if not full_path.exists() or not full_path.is_file():
+        response.status_code = 404
         return {
             "status": "error",
             "message": f"Concept not found: {filepath}"
@@ -175,6 +207,7 @@ async def update_concept(filepath: str, data: UpdateConceptInput):
             "message": f"Концепцията е обновена: {metadata.title}"
         }
     except Exception as e:
+        response.status_code = 500
         return {
             "status": "error",
             "message": str(e)

@@ -71,15 +71,19 @@ app = FastAPI(
     lifespan=lifespan
 )
 
-# CORS — разрешаваме всички origin-и за мобилни устройства и PWA
-# В production може да се ограничи до конкретни домейни
+# CORS - configurable via CORS_ORIGINS in .env
+# Default: * (allows all origins - backward compatible)
+# For production: CORS_ORIGINS=http://localhost:5173,http://localhost:8000
+_s = get_settings()
+_cors_origins = _s.cors_origins_list
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_origins=_cors_origins,
+    allow_credentials=_cors_origins != [chr(42)],
+    allow_methods=[chr(42)],
+    allow_headers=[chr(42)],
 )
+logger.info('CORS configured: origins={_cors_origins}, credentials={_cors_origins != [*]}')
 
 # Debug middleware — логва всяка заявка/отговор (само ако е включен)
 @app.middleware("http")

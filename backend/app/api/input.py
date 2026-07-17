@@ -2,7 +2,7 @@
 API endpoints за въвеждане на информация (текст и аудио).
 """
 
-from fastapi import APIRouter, UploadFile, File, Form, Request
+from fastapi import APIRouter, UploadFile, File, Form, Request, Response
 from pydantic import BaseModel
 
 from app.core.processor import ConceptProcessor
@@ -11,6 +11,8 @@ from app.audio.postprocessor import full_postprocess, regex_postprocess
 from app.config.okf_schema import OkfDocument
 from app.llm.ollama_client import OllamaClient
 from loguru import logger
+from pathlib import Path
+import uuid
 
 router = APIRouter(prefix="/api/input", tags=["input"])
 processor = ConceptProcessor()
@@ -21,7 +23,7 @@ class TextInput(BaseModel):
 
 
 @router.post("/text")
-async def input_text(data: TextInput):
+async def input_text(data: TextInput, response: Response):
     """
     Приема текст и го обработва през LLM pipeline-а.
     """
@@ -34,6 +36,7 @@ async def input_text(data: TextInput):
         }
     except Exception as e:
         logger.error(f"Грешка при обработка на текст: {e}")
+        response.status_code = 500
         return {
             "status": "error",
             "message": str(e)
@@ -54,7 +57,12 @@ async def input_audio(
         language: Език за транскрипция ("bg" или "en", дефолт: "bg")
     """
     from app.config.settings import get_settings
-    audio_path = get_settings().audio_upload_path / file.filename
+
+    # Санитизираме името на файла — вземаме само името (без path components)
+    # и добавяме кратък случаен prefix за избягване на колизии
+    original_name = Path(file.filename or "audio.webm").name
+    safe_name = f"{uuid.uuid4().hex[:8]}_{original_name}"
+    audio_path = get_settings().audio_upload_path / safe_name
 
     # Запазваме файла
     with open(audio_path, "wb") as f:
@@ -82,7 +90,7 @@ async def input_audio(
         if not transcribed_text.strip():
             return {
                 "status": "error",
-                "filename": file.filename,
+                "filename": original_name,
                 "size": len(content),
                 "message": "Транскрипцията не разпозна реч в аудио файла."
             }
@@ -111,7 +119,7 @@ async def input_audio(
 
         return {
             "status": "ok",
-            "filename": file.filename,
+            "filename": original_name,
             "size": len(content),
             "duration_seconds": duration,
             "language": detected_language,
@@ -123,7 +131,7 @@ async def input_audio(
         logger.error(f"Грешка при аудио обработка: {e}")
         return {
             "status": "error",
-            "filename": file.filename,
+            "filename": original_name,
             "size": len(content),
             "message": f"Грешка при транскрипция/обработка: {str(e)}"
         }

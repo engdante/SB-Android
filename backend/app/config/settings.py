@@ -81,6 +81,9 @@ class Settings(BaseSettings):
     # Backend URL (for frontend to know where to find the backend)
     backend_url: str = "http://localhost:8000"
 
+    # CORS origins — comma-separated list or "*" for all (default: "*" for backward compatibility)
+    cors_origins: str = "*"
+
     # Debug system
     debug_enabled: bool = False
 
@@ -124,6 +127,13 @@ class Settings(BaseSettings):
         except (json.JSONDecodeError, TypeError):
             return []
 
+    @property
+    def cors_origins_list(self) -> list[str]:
+        """Parses CORS_ORIGINS string into a list of origins."""
+        if self.cors_origins.strip() == "*":
+            return ["*"]
+        return [o.strip() for o in self.cors_origins.split(",") if o.strip()]
+
 
 # ──────────────────────────────────────────────
 # Runtime overrides (live, not saved to .env)
@@ -138,6 +148,7 @@ class Settings(BaseSettings):
 #   - okf_data_dir       — used during storage initialization
 #   - debug              — controls uvicorn reload, requires restart
 #   - app_name/version   — set once in .env
+#   - cors_origins       — set at startup, requires restart
 _RUNTIME_KEYS = {
     "ollama_host": "ollama_host",
     "ollama_api_key": "ollama_api_key",
@@ -292,6 +303,7 @@ def save_settings_to_env(settings: Settings) -> None:
         "APP_VERSION": settings.app_version,
         "AUDIO_UPLOAD_DIR": settings.audio_upload_dir,
         "BACKEND_URL": settings.backend_url,
+        "CORS_ORIGINS": settings.cors_origins,
     }
 
     updated = {k: False for k in values}
